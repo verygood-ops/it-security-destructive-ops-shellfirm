@@ -1,0 +1,40 @@
+#!/bin/zsh
+set -eu
+
+[[ "${3:-/}" == "/" ]] || { echo "VGS ShellFirm requires the boot volume." >&2; exit 1; }
+
+readonly target_dir="/Library/Application Support/VGS/ShellFirm/policy"
+readonly target="${target_dir}/.shellfirm.yaml"
+readonly expected_sha="@POLICY_SHA256@"
+readonly binary="/Library/Application Support/VGS/ShellFirm/bin/shellfirm"
+readonly expected_version="shellfirm @APP_VERSION@"
+
+if [[ ! -d "${target_dir}" || -L "${target_dir}" ]]; then
+  /bin/echo "VGS ShellFirm policy verification failed: ${target_dir} is not a managed directory." >&2
+  exit 1
+fi
+
+if [[ ! -f "${target}" || -L "${target}" ]]; then
+  /bin/echo "VGS ShellFirm policy verification failed: ${target} was not installed." >&2
+  exit 1
+fi
+
+/usr/sbin/chown root:wheel "${target}"
+/bin/chmod 0644 "${target}"
+
+actual_sha="$(/usr/bin/shasum -a 256 "${target}" | /usr/bin/awk '{print $1}')"
+if [[ "${actual_sha}" != "${expected_sha}" ]]; then
+  /bin/echo "VGS ShellFirm policy verification failed: SHA-256 mismatch." >&2
+  exit 1
+fi
+
+actual_version="$("${binary}" --version 2>/dev/null)" || actual_version=""
+if [[ "${actual_version}" != "${expected_version}" ]]; then
+  /bin/echo "VGS ShellFirm policy verification failed: expected ${expected_version}, found ${actual_version:-unknown}." >&2
+  exit 1
+fi
+
+"${binary}" policy validate "${target}"
+
+/bin/echo "VGS ShellFirm policy @PACKAGE_VERSION@ installed and validated at ${target}."
+exit 0
