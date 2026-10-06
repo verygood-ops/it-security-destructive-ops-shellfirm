@@ -8,8 +8,6 @@ env:
   RUST_TOOLCHAIN: stable
   BIN_NAME: shellfirm
   PROJECT_NAME: shellfirm
-  REPO_NAME: kaplanelad/shellfirm
-  BREW_TAP: kaplanelad/homebrew-tap
 
 jobs:
   validate:
@@ -47,23 +45,6 @@ jobs:
           fi
           echo "Version v$TAG_VERSION has not been released yet"
 
-      - name: Check npm versions in sync
-        id: npm-check
-        run: |
-          TAG_VERSION="${{ steps.version.outputs.version }}"
-          ALL_MATCH=true
-          for pkg in npm/shellfirm npm/cli-darwin-arm64 npm/cli-darwin-x64 npm/cli-linux-x64 npm/cli-win32-x64; do
-            PKG_VERSION=$(node -p "require('./$pkg/package.json').version")
-            if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
-              echo "::error::$pkg version ($PKG_VERSION) does not match tag (v$TAG_VERSION). Run: ./scripts/bump-npm-version.sh $TAG_VERSION"
-              ALL_MATCH=false
-            fi
-          done
-          if [ "$ALL_MATCH" != "true" ]; then
-            echo "::error::npm package versions are out of sync. Release aborted."
-            exit 1
-          fi
-
   dist:
     name: Dist
     needs: [validate]
@@ -78,8 +59,6 @@ jobs:
           rust: stable
           target: x86_64-unknown-linux-gnu
           cross: false
-          npm_pkg: cli-linux-x64
-          binary: shellfirm
         # - build: aarch64-linux
         #   os: ubuntu-20.04
         #   rust: stable
@@ -90,22 +69,16 @@ jobs:
           rust: stable
           target: x86_64-apple-darwin
           cross: false
-          npm_pkg: cli-darwin-x64
-          binary: shellfirm
         - build: aarch64-macos
           os: macos-latest
           rust: stable
           target: aarch64-apple-darwin
           cross: false
-          npm_pkg: cli-darwin-arm64
-          binary: shellfirm
         - build: x86_64-windows
           os: windows-latest
           rust: stable
           target: x86_64-pc-windows-msvc
           cross: false
-          npm_pkg: cli-win32-x64
-          binary: shellfirm.exe
 
 
     steps:
@@ -149,16 +122,6 @@ jobs:
         with:
           name: bins-${{ matrix.build }}
           path: dist
-
-      - name: Copy binary to npm package
-        shell: bash
-        run: cp target/${{ matrix.target }}/release/${{ matrix.binary }} npm/${{ matrix.npm_pkg }}/
-
-      - name: Upload npm artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.npm_pkg }}
-          path: npm/${{ matrix.npm_pkg }}/
 
   publish-github:
     name: Publish to GitHub Releases
@@ -215,70 +178,3 @@ jobs:
           file_glob: true
           tag: ${{ steps.tagname.outputs.val }}
           overwrite: true
-
-  publish-brew:
-    name: Publish to Homebrew
-    needs: [publish-github]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Extract version
-        id: extract-version
-        run: |
-          printf "::set-output name=%s::%s\n" tag-name "${GITHUB_REF#refs/tags/}"
-      - uses: mislav/bump-homebrew-formula-action@v1
-        with:
-          formula-path: ${{env.PROJECT_NAME}}.rb
-          homebrew-tap: ${{ env.BREW_TAP }}
-          download-url: "https://github.com/${{ env.REPO_NAME }}/releases/download/${{ steps.extract-version.outputs.tag-name }}/${{env.PROJECT_NAME}}-${{ steps.extract-version.outputs.tag-name }}-x86_64-macos.tar.xz"
-          commit-message: updating formula for ${{ env.PROJECT_NAME }}
-        env:
-          COMMITTER_TOKEN: ${{ secrets.COMMITTER_TOKEN }}
-
-  publish-npm:
-    name: Publish to npm
-    needs: [validate, dist]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          registry-url: https://registry.npmjs.org
-
-      - name: Download all npm artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Prepare platform packages
-        run: |
-          for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-x64 cli-win32-x64; do
-            cp -r artifacts/$pkg/* npm/$pkg/
-          done
-
-      - name: Publish platform packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-x64 cli-win32-x64; do
-            npm publish ./npm/$pkg --access public
-          done
-
-      - name: Publish main package
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish ./npm/shellfirm --access public
-
-  publish-crates:
-    name: Publish to crates.io
-    needs: [validate, dist]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-      - run: cargo publish -p shellfirm
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
