@@ -1,0 +1,94 @@
+name: Jamf Policy package
+
+on:
+  pull_request:
+    paths:
+      - 'shellfirm/**'
+      - 'Cargo.*'
+      - 'build.rs'
+      - '.cargo/**'
+      - '.shellfirm.yaml'
+      - 'packaging/jamf/**'
+      - '.github/workflows/jamf-*.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'shellfirm/**'
+      - 'Cargo.*'
+      - 'build.rs'
+      - '.cargo/**'
+      - '.shellfirm.yaml'
+      - 'packaging/jamf/**'
+      - '.github/workflows/jamf-*.yml'
+  workflow_dispatch:
+    inputs:
+      upload_to_jamf:
+        description: Upload a new versioned Jamf package (does not deploy to endpoints)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Build and inspect Policy installer
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Prepare Rust and test packaging helpers
+        run: |
+          test "$(uname -m)" = arm64
+          rustup toolchain install stable --profile minimal
+          rustup target add --toolchain stable aarch64-apple-darwin
+          python3 -m unittest discover -s packaging/jamf -p 'test_*.py' -v
+      - name: Test and compile ShellFirm with embedded checks
+        run: |
+          cargo +stable test --locked --workspace --lib
+          cargo +stable build --locked --release --package shellfirm --bin shellfirm --target aarch64-apple-darwin
+          strip target/aarch64-apple-darwin/release/shellfirm
+          codesign --force --sign - target/aarch64-apple-darwin/release/shellfirm
+          codesign --verify --strict target/aarch64-apple-darwin/release/shellfirm
+      - name: Build and verify package payload
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          python3 packaging/jamf/build.py policy --binary target/aarch64-apple-darwin/release/shellfirm --output dist/policy --commit "$SOURCE_COMMIT"
+          rustc +stable --version > dist/policy/build-environment.txt
+          sw_vers >> dist/policy/build-environment.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: jamf-policy-${{ github.sha }}
+          path: dist/policy/
+          if-no-files-found: error
+          retention-days: 30
+
+  upload:
+    name: Upload Policy package to Jamf
+    needs: package
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.upload_to_jamf
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: jamf
+    concurrency:
+      group: jamf-package-uploads
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: jamf-policy-${{ github.sha }}
+          path: dist/policy
+      - name: Create package, upload, and verify server checksum
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+          JAMF_URL: ${{ vars.JAMF_URL }}
+          JAMF_CATEGORY_ID: ${{ vars.JAMF_CATEGORY_ID }}
+          JAMF_CLIENT_ID: ${{ secrets.JAMF_CLIENT_ID }}
+          JAMF_CLIENT_SECRET: ${{ secrets.JAMF_CLIENT_SECRET }}
+        run: python3 packaging/jamf/upload.py dist/policy --commit "$SOURCE_COMMIT"
