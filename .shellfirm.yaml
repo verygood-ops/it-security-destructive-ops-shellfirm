@@ -1,0 +1,145 @@
+# VGS ShellFirm supplemental baseline
+#
+# Purpose:
+# - Add organization-specific rules that are missing from ShellFirm v0.3.10.
+# - Detect high-confidence catastrophic operations at Critical severity.
+# - Require an explicit Yes confirmation for risky but potentially legitimate work.
+#
+# This policy supplements ShellFirm's bundled checks. ShellFirm remains a
+# bypassable safety net, not a security boundary.
+
+version: 1
+
+context:
+  protected_branches:
+    - main
+    - master
+    - production
+    - "release/*"
+
+  production_k8s_patterns:
+    - prod
+    - production
+    - prd
+    - live
+
+checks:
+  # RCA control: -replace performs destroy followed by recreate.
+  - id: "vgs:terraform_apply_replace"
+    from: base
+    test: '(?mi)^[ \t]*(?:sudo[ \t]+)?(?:terraform|terragrunt)\b[^\r\n]*\bapply\b[^\r\n]*-replace(?:=|[ \t])'
+    severity: Critical
+    description: "Terraform/Terragrunt apply -replace performs a destroy-and-recreate operation."
+    alternative: "Stop and obtain Platform/SRE review before replacing a managed resource."
+    alternative_info: "Use a reviewed plan and the approved recovery procedure."
+
+  - id: "vgs:terraform_auto_approve"
+    from: base
+    test: '(?mi)^[ \t]*(?:sudo[ \t]+)?(?:terraform|terragrunt)\b[^\r\n]*\b(?:apply|destroy)\b[^\r\n]*--?auto-approve(?:[ \t]|$)'
+    severity: Critical
+    description: "Terraform/Terragrunt apply or destroy with auto-approve bypasses interactive review."
+    alternative: "Create and review a saved plan before applying it."
+    alternative_info: "Require a human to review the proposed changes and destruction."
+
+  - id: "vgs:terraform_destroy"
+    from: base
+    test: '(?mi)^[ \t]*(?:sudo[ \t]+)?(?:terraform|terragrunt)\b[^\r\n]*\bdestroy\b'
+    severity: Critical
+    description: "Terraform/Terragrunt destroy can remove managed infrastructure."
+    alternative: "Run a destroy plan and obtain Platform/SRE approval."
+    alternative_info: "Review the complete destruction scope before continuing."
+
+  - id: "vgs:terraform_state_rm"
+    from: base
+    test: '(?mi)^[ \t]*(?:sudo[ \t]+)?(?:terraform|terragrunt)\b[^\r\n]*\bstate[ \t]+rm\b'
+    severity: High
+    description: "Removing an object from Terraform state stops Terraform from managing it."
+    alternative: "List and back up state, then obtain Platform/SRE review."
+    alternative_info: "State removal can hide drift or orphan live infrastructure."
+
+  # Flux CRDs are control-plane resources. Their deletion can cascade through
+  # Flux custom resources and managed workloads.
+  - id: "vgs:kubernetes_delete_flux_crd"
+    from: base
+    test: '(?mi)^[ \t]*(?:sudo[ \t]+)?kubectl\b[^\r\n]*\bdelete\b[^\r\n]*\b(?:customresourcedefinitions?|crds?)\b[^\r\n]*[A-Za-z0-9.-]*toolkit\.fluxcd\.io\b'
+    severity: Critical
+    description: "Deleting a Flux CRD can garbage-collect Flux resources and cascade into workload removal."
+    alternative: "Use the approved Flux maintenance or recovery procedure."
+    alternative_info: "Protect Flux CRDs with Kubernetes admission policy as the primary control."
+
+  - id: "vgs:kubernetes_delete_production_namespace"
+    from: base
+    test: '(?mi)^[ \t]*(?:sudo[ \t]+)?kubectl\b[^\r\n]*\bdelete\b[^\r\n]*\b(?:namespaces?|ns)\b[^\r\n]*[ \t](?:prod|production|prd|live)(?:[-_][A-Za-z0-9._-]+)?(?:[ \t]|$)'
+    severity: Critical
+    description: "Deleting a production-like Kubernetes namespace removes all namespaced resources."
+    alternative: "Use an approved, scoped workload-removal procedure."
+    alternative_info: "Verify the cluster, namespace, backups, and recovery plan first."
+
+  - id: "vgs:kubernetes_delete_namespace"
+    from: base
+    test: '(?mi)^[ \t]*(?:sudo[ \t]+)?kubectl\b[^\r\n]*\bdelete\b[^\r\n]*\b(?:namespaces?|ns)\b'
+    severity: Critical
+    description: "Deleting a Kubernetes namespace removes all resources inside it."
+    alternative: "Delete only the intended workload resources after reviewing scope."
+    alternative_info: "Require an explicit confirmation even outside production."
+
+  - id: "vgs:helm_uninstall_flux"
+    from: base
+    test: '(?mi)^[ \t]*(?:sudo[ \t]+)?helm\b[^\r\n]*\b(?:uninstall|delete)\b[^\r\n]*[ \t]flux(?:[ \t]|$)'
+    severity: Critical
+    description: "Uninstalling the Flux Helm release can remove Flux controllers and CRDs."
+    alternative: "Use the approved Flux upgrade or recovery procedure."
+    alternative_info: "Confirm CRD retention and workload behavior before changing the release."
+
+  - id: "vgs:helm_uninstall"
+    from: base
+    test: '(?mi)^[ \t]*(?:sudo[ \t]+)?helm\b[^\r\n]*\b(?:uninstall|delete)\b'
+    severity: High
+    description: "Helm uninstall removes a release and resources managed by that release."
+    alternative: "Review the rendered resources and recovery plan before uninstalling."
+    alternative_info: "Require an explicit confirmation for legitimate uninstall operations."
+
+  # Multiline-aware protection for a small set of catastrophic rm targets.
+  - id: "vgs:recursive_force_delete_critical_path"
+    from: base
+    test: '(?m)^[ \t]*(?:sudo[ \t]+)?rm[ \t]+(?:-[A-Za-z]*r[A-Za-z]*f[A-Za-z]*|-[A-Za-z]*f[A-Za-z]*r[A-Za-z]*|-r[ \t]+-f|-f[ \t]+-r|--recursive[ \t]+--force|--force[ \t]+--recursive)[ \t]+(?:/|/\*|~|~/\*|\$HOME|\$HOME/\*)(?:[ \t]|$)'
+    severity: Critical
+    description: "Recursive forced deletion targets a filesystem root or home directory."
+    alternative: "Specify and verify a narrow disposable directory."
+    alternative_info: "List the resolved target and remove only the intended files."
+
+  - id: "vgs:git_force_push"
+    from: base
+    test: '(?mi)^[ \t]*git\b[^\r\n]*\bpush\b[^\r\n]*(?:--force(?:[ \t]|$)|[ \t]-f(?:[ \t]|$))'
+    severity: High
+    description: "A force push can overwrite remote Git history."
+    alternative: "git push --force-with-lease"
+    alternative_info: "Force-with-lease refuses to overwrite unexpected remote changes."
+    filters:
+      - type: NotContains
+        value: "--force-with-lease"
+
+  - id: "vgs:git_reset_hard"
+    from: base
+    test: '(?mi)^[ \t]*git\b[^\r\n]*\breset\b[^\r\n]*--hard(?:[ \t]|$)'
+    severity: High
+    description: "Git reset --hard discards local working-tree and index changes."
+    alternative: "git stash push --include-untracked"
+    alternative_info: "Stash changes so they can be recovered later."
+
+# These commands can be legitimate, but should require deliberate confirmation.
+overrides:
+  - id: "vgs:terraform_apply_replace"
+    challenge: Yes
+  - id: "vgs:terraform_destroy"
+    challenge: Yes
+  - id: "vgs:terraform_state_rm"
+    challenge: Yes
+  - id: "vgs:kubernetes_delete_namespace"
+    challenge: Yes
+  - id: "vgs:helm_uninstall"
+    challenge: Yes
+  - id: "vgs:git_force_push"
+    challenge: Yes
+  - id: "vgs:git_reset_hard"
+    challenge: Yes
