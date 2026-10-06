@@ -1,0 +1,53 @@
+#!/bin/zsh
+set -eu
+
+[[ "${3:-/}" == "/" ]] || { echo "VGS ShellFirm requires the boot volume." >&2; exit 1; }
+
+readonly target_dir="/Library/Application Support/VGS/ShellFirm/policy"
+readonly target="${target_dir}/.shellfirm.yaml"
+readonly package_id="io.vgs.shellfirm.policy"
+readonly expected_sha="@POLICY_SHA256@"
+readonly binary="/Library/Application Support/VGS/ShellFirm/bin/shellfirm"
+readonly expected_version="shellfirm @APP_VERSION@"
+
+if [[ ! -x "${binary}" ]]; then
+  /bin/echo "VGS ShellFirm policy installation stopped: the managed ShellFirm binary is missing." >&2
+  exit 1
+fi
+
+if [[ -L "${target_dir}" ]]; then
+  /bin/echo "VGS ShellFirm policy installation stopped: ${target_dir} must not be a symbolic link." >&2
+  exit 1
+fi
+
+if [[ -L "${target}" ]]; then
+  /bin/echo "VGS ShellFirm policy installation stopped: ${target} must be a regular managed file." >&2
+  exit 1
+fi
+
+if [[ -e "${target}" && ! -f "${target}" ]]; then
+  /bin/echo "VGS ShellFirm policy installation stopped: ${target} is not a regular file." >&2
+  exit 1
+fi
+
+actual_version="$("${binary}" --version 2>/dev/null)" || actual_version=""
+if [[ "${actual_version}" != "${expected_version}" ]]; then
+  /bin/echo "VGS ShellFirm policy installation stopped: expected ${expected_version}, found ${actual_version:-unknown}." >&2
+  exit 1
+fi
+
+if [[ -e "${target}" ]]; then
+  current_sha="$(/usr/bin/shasum -a 256 "${target}" | /usr/bin/awk '{print $1}')"
+
+  if [[ "${current_sha}" == "${expected_sha}" ]]; then
+    /bin/echo "Existing VGS ShellFirm policy matches the approved policy. Reinstallation is allowed."
+  elif /usr/sbin/pkgutil --pkg-info "${package_id}" >/dev/null 2>&1; then
+    /bin/echo "An earlier VGS-managed policy is installed. Managed upgrade is allowed."
+  else
+    /bin/echo "VGS ShellFirm policy installation stopped: ${target} exists but is not owned by the VGS policy package." >&2
+    /bin/echo "Preserve and review the existing policy before retrying." >&2
+    exit 1
+  fi
+fi
+
+exit 0
