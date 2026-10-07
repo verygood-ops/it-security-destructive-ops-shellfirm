@@ -5,6 +5,13 @@ set -eu
 
 readonly managed_binary="/Library/Application Support/VGS/ShellFirm/bin/shellfirm"
 readonly command_path="/usr/local/bin/shellfirm"
+readonly managed_checks='/Library/Application Support/VGS/ShellFirm/checks/default-checks.yaml'
+[[ -f "$managed_checks" && ! -L "$managed_checks" ]] || {
+  echo 'Install the VGS ShellFirm Checks package before the managed-checks binary.' >&2; exit 1;
+}
+[[ "$(/usr/bin/shasum -a 256 "$managed_checks" | /usr/bin/awk '{print $1}')" == '@CHECKS_SHA256@' ]] || {
+  echo 'Default checks do not match this approved binary installation.' >&2; exit 1;
+}
 
 arm64_available=$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null) || arm64_available="0"
 

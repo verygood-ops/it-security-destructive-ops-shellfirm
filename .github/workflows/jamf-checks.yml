@@ -1,4 +1,4 @@
-name: Jamf Policy package
+name: Jamf Checks package
 
 on:
   pull_request:
@@ -32,7 +32,7 @@ permissions:
 
 jobs:
   package:
-    name: Build and inspect Policy installer
+    name: Build and inspect Checks installer
     runs-on: macos-15
     timeout-minutes: 30
     steps:
@@ -56,18 +56,18 @@ jobs:
         env:
           SOURCE_COMMIT: ${{ github.sha }}
         run: |
-          python3 packaging/jamf/build.py policy --binary target/aarch64-apple-darwin/release/shellfirm --output dist/policy --commit "$SOURCE_COMMIT"
-          rustc +stable --version > dist/policy/build-environment.txt
-          sw_vers >> dist/policy/build-environment.txt
+          python3 packaging/jamf/build.py checks --binary target/aarch64-apple-darwin/release/shellfirm --output dist/checks --commit "$SOURCE_COMMIT"
+          rustc +stable --version > dist/checks/build-environment.txt
+          sw_vers >> dist/checks/build-environment.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: jamf-policy-${{ github.sha }}
-          path: dist/policy/
+          name: jamf-checks-${{ github.sha }}
+          path: dist/checks/
           if-no-files-found: error
           retention-days: 30
 
   upload:
-    name: Upload Policy package to Jamf
+    name: Upload Checks package to Jamf
     needs: package
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.upload_to_jamf
     runs-on: ubuntu-latest
@@ -82,8 +82,8 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: jamf-policy-${{ github.sha }}
-          path: dist/policy
+          name: jamf-checks-${{ github.sha }}
+          path: dist/checks
       - name: Create package, upload, and verify server checksum
         env:
           SOURCE_COMMIT: ${{ github.sha }}
@@ -91,4 +91,4 @@ jobs:
           JAMF_CATEGORY_ID: ${{ vars.JAMF_CATEGORY_ID }}
           JAMF_CLIENT_ID: ${{ secrets.JAMF_CLIENT_ID }}
           JAMF_CLIENT_SECRET: ${{ secrets.JAMF_CLIENT_SECRET }}
-        run: python3 packaging/jamf/upload.py dist/policy --commit "$SOURCE_COMMIT"
+        run: python3 packaging/jamf/upload.py dist/checks --commit "$SOURCE_COMMIT"

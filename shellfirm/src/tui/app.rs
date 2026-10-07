@@ -121,6 +121,7 @@ pub struct App {
 
     /// Cached pool of check IDs for ignore/deny pickers
     pub all_check_ids: Vec<PickerItem>,
+    default_checks: Vec<Check>,
 }
 
 impl App {
@@ -148,7 +149,8 @@ impl App {
         }
 
         // Pool of all known check IDs for ignore/deny pickers
-        let mut all_check_ids: Vec<PickerItem> = crate::checks::all_checks_cached()
+        let default_checks = crate::checks::get_all()?;
+        let mut all_check_ids: Vec<PickerItem> = default_checks
             .iter()
             .map(|c| PickerItem {
                 value: c.id.clone(),
@@ -188,6 +190,7 @@ impl App {
             status_message: None,
             running: true,
             all_check_ids,
+            default_checks,
         })
     }
 
@@ -369,7 +372,7 @@ impl App {
                 match action {
                     PendingAction::Create => {
                         let validator = IdUniquenessValidator::new(
-                            crate::checks::all_checks_cached()
+                            self.default_checks
                                 .iter()
                                 .map(|c| c.id.clone())
                                 .collect(),
@@ -389,7 +392,7 @@ impl App {
                     PendingAction::Edit { index } => {
                         if let Some(c) = self.custom.checks.get(index).cloned() {
                             let validator = IdUniquenessValidator::new(
-                                crate::checks::all_checks_cached()
+                                self.default_checks
                                     .iter()
                                     .map(|c| c.id.clone())
                                     .collect(),
@@ -645,7 +648,7 @@ impl App {
     }
 
     fn refresh_check_id_pool(&mut self) {
-        let mut all: Vec<PickerItem> = crate::checks::all_checks_cached()
+        let mut all: Vec<PickerItem> = self.default_checks
             .iter()
             .map(|c| PickerItem {
                 value: c.id.clone(),

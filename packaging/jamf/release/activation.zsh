@@ -5,6 +5,8 @@ setopt pipefail
 readonly managed_binary="/Library/Application Support/VGS/ShellFirm/bin/shellfirm"
 readonly managed_policy="/Library/Application Support/VGS/ShellFirm/policy/.shellfirm.yaml"
 readonly command_path="/usr/local/bin/shellfirm"
+readonly managed_checks='/Library/Application Support/VGS/ShellFirm/checks/default-checks.yaml'
+readonly expected_checks_sha='@CHECKS_SHA256@' 
 readonly expected_version="shellfirm @APP_VERSION@"
 readonly expected_policy_sha="@POLICY_SHA256@"
 
@@ -95,6 +97,14 @@ actual_policy_sha="$(/usr/bin/shasum -a 256 "${managed_policy}" | /usr/bin/awk '
 "${managed_binary}" policy validate "${managed_policy}" >/dev/null || \
   fail "${managed_policy} did not pass ShellFirm policy validation."
 
+[[ -f "$managed_checks" && ! -L "$managed_checks" ]] || fail 'managed default checks are missing.'
+[[ "$(/usr/bin/shasum -a 256 "$managed_checks" | /usr/bin/awk '{print $1}')" == "$expected_checks_sha" ]] || fail 'default checks checksum differs from the approved release.'
+checks_receipt="$(/usr/sbin/pkgutil --pkg-info-plist io.vgs.shellfirm.checks)" || fail 'default-checks package receipt is missing.'
+checks_version="$(/usr/bin/plutil -extract pkg-version raw -o - - <<< "$checks_receipt")" || fail 'cannot read default-checks version.'
+[[ "$checks_version" == '@CHECKS_VERSION@' ]] || fail 'default-checks package version differs.'
+[[ "$("$managed_binary" default-checks source)" == "$managed_checks" ]] || fail 'binary does not use the managed default-checks file.'
+"$managed_binary" default-checks status || fail 'default-checks runtime validation failed.'
+
 console_user="$(/usr/bin/stat -f '%Su' /dev/console 2>/dev/null)" || console_user=""
 jamf_user="${3:-}"
 
@@ -117,6 +127,7 @@ readonly target_shell="${shell_record#UserShell: }"
 /bin/echo "Activating ${expected_version} for ${target_user} (${target_home})."
 
 install_managed_policy_link
+run_as_target_user "$command_path" default-checks status || fail 'default checks are inaccessible to the user.'
 
 run_as_target_user "${command_path}" policy validate "${target_home}/.shellfirm.yaml" >/dev/null || \
   fail "the user-visible VGS policy did not pass ShellFirm validation."
@@ -188,7 +199,7 @@ VGS_APPROVED_RELEASE
 /bin/mv -f "$state_tmp" "$state_dir/approved-release.plist"
 trap - EXIT
 /bin/echo 'VGS ShellFirm release @RELEASE_ID@ activated; approved checksums recorded.'
-# Log all three checks in the installation policy as well as the weekly policy.
+# Log all four checks in the installation policy as well as the weekly policy.
 /bin/bash -s -- "$@" <<'VGS_RELEASE_HEALTH' || fail 'post-install health verification failed.'
 @HEALTHCHECK@
 VGS_RELEASE_HEALTH

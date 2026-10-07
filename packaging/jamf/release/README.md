@@ -1,23 +1,24 @@
 # Approved IT Security pilot releases
 
-This follow-up to the package-building PR adds deployment after a merge. It uses
-`jamf-release.yml`; the two original workflows remain available for manual package
-publishing and their existing PR checks.
+The `jamf-release.yml` workflow publishes an approved three-package release after
+a merge. The binary, checks and VGS policy workflows also validate individual
+packages and support manual package upload without endpoint deployment.
 
 ## Release flow
 
-1. An engineer changes embedded checks such as `shellfirm/checks/aws.yaml`, Rust
+1. An engineer changes default checks such as `shellfirm/checks/aws.yaml`, Rust
    source, or the separate root `.shellfirm.yaml`, and opens a PR.
-2. PR validation compiles the binary, runs tests and strict Clippy, builds both
+2. PR validation compiles the binary, runs tests and strict Clippy, builds three
    installers, validates their payloads, and renders the activation/health scripts.
    No Jamf secrets are available to PR build jobs.
 3. After merge to `main`, the existing **Tests** workflow must finish successfully.
    Its `workflow_run` event starts this release workflow for that exact commit.
    Failed tests and PR workflow events cannot start a deployment.
-4. The workflow builds the Apple Silicon binary with its embedded YAML checks,
-   builds the separate VGS YAML installer, and stores the pair plus their release
-   descriptor and activation scripts in an artifact. Both packages are promoted
-   together so an application-version change cannot leave an incompatible pair.
+4. The workflow builds the Apple Silicon binary without embedded YAML checks,
+   aggregates `shellfirm/checks/*.yaml` into a separate default-check catalog
+   installer, and builds the separate VGS YAML installer. It stores all three with
+   their release descriptor and activation scripts. The release currently builds
+   and promotes all three together, including checks-only source changes.
 5. **cyberleo17-VGS approves the `jamf` environment deployment.** Existing main-only
    restrictions, required review and disabled administrator bypass remain intact.
 6. The deployment job verifies that the source commit is still the latest `main`,
@@ -27,7 +28,7 @@ publishing and their existing PR checks.
    verifies their package/script IDs, triggers and group scope, and checks `main`
    again. It enables the new health policy, disables old pilot deployment/health
    policies, then enables the new installation policy last.
-8. Jamf installs the binary then the policy package and runs activation After the
+8. Jamf installs the default checks, binary, then VGS policy packages and runs activation After the
    packages. Installation is once per computer for each new release policy, at
    recurring check-in or configured login events, with three check-in retries.
    Login triggers depend on the tenant's login-event configuration. An eligible
@@ -35,7 +36,7 @@ publishing and their existing PR checks.
 
 A successful GitHub deployment means the verified Jamf policy is enabled. It does
 not mean all endpoints installed successfully. Use that policy's Jamf logs for
-installation, activation, and all three health results. GitHub records the new
+installation, activation, and all four health results. GitHub records the new
 policy, script and package IDs without publishing device inventory or credentials.
 
 ## Fixed scope and affected existing objects
@@ -62,7 +63,7 @@ Application version comes from `shellfirm/Cargo.toml`. Installer versions are
 assigned automatically and do not require editing `versions.json`:
 
 - Binary: `<application version>.<1000 + run_number * 100 + run_attempt>`.
-- Policy: `<UTC year>.<month>.<day>.<same sequence>`.
+- Checks and VGS policy: `<UTC year>.<month>.<day>.<same sequence>`.
 
 For example, application 0.3.10 in run 1, attempt 1 creates binary installer
 0.3.10.1101. This does not change `shellfirm --version`. Full reruns have distinct
@@ -70,8 +71,10 @@ versions; rerunning only failed deployment jobs reuses the already-built artifac
 Versions are unique within this workflow; do not reset/recreate its run history or
 reuse its version scheme in another release workflow. PR runs also consume numbers.
 
-Activation verifies the exact compiled binary hash, version, VGS policy hash and
-syntax, policy discovery, the existing Terragrunt test, and saved Zsh/Bash hooks.
+Activation verifies the exact compiled binary hash and version, the checks receipt
+and catalog hash, root ownership, the fixed catalog source, runtime catalog loading
+as root and as the selected user, VGS policy hash and syntax, policy discovery, the
+existing Terragrunt test, and saved Zsh/Bash hooks.
 It then atomically writes this non-secret root-owned descriptor:
 
 `/Library/Application Support/VGS/ShellFirm/state/approved-release.plist`
@@ -81,6 +84,11 @@ The new weekly script remains read-only and checks:
 1. Binary receipt version, executable, command link, and (for CI releases) hash.
 2. Policy receipt version and policy file hash.
 3. The selected user's managed policy link, access, and Zsh/Bash startup hooks.
+4. Default-checks receipt version, catalog hash, ownership, and permissions.
+
+Schema 2 descriptors include the checks package version and hash. Existing schema
+1 releases and the pre-CI baseline retain their existing checks and report
+`NOT_APPLICABLE` for the separate catalog. A malformed schema 2 descriptor fails.
 
 The descriptor and its managed parent directories must be root-owned and not
 writable by other users; the descriptor must be a regular 0644 file. A missing
@@ -98,13 +106,13 @@ changed, update the probe in the same reviewed PR.
 
 ## API permissions required before enabling this workflow
 
-The existing package publisher client needs its API role expanded with:
+The existing package publisher role already has the required privileges:
 
 - Read Policies, Create Policies, Update Policies
 - Read Scripts, Create Scripts
 - Read Static Computer Groups
 
-Keep existing Read/Create/Update Packages. No Delete privileges, Update Scripts,
+Read/Create/Update Packages are also required. The third package needs no added privileges. No Delete privileges, Update Scripts,
 MDM command privileges, console account, or new secrets are required. These API
 privileges apply across their Jamf resource types; the code's group/object checks
 are application safeguards, not a Jamf-enforced per-policy permission boundary.
@@ -148,8 +156,12 @@ scripts; release artifacts are retained for 90 days.
 `python3 -m unittest discover -s packaging/jamf -p 'test_*.py' -v` tests artifact
 integrity, scope rejection, immutable scripts, stale approvals, promotion ordering,
 retirement and retry behavior against fake APIs. Build jobs additionally compile
-and test Rust, inspect both macOS packages, and check rendered shell syntax. They
-do not install anything on the build host.
+and test Rust, inspect all three macOS packages, and check rendered shell syntax. They
+also exercise the actual managed binary on an ephemeral GitHub macOS runner:
+changing the catalog changes the matched rule without changing the executable,
+while missing, malformed, insecure or symlinked catalogs fail. That fixture writes
+only the managed catalog and its directories on the runner, then removes the
+catalog; it does not run installers or destructive commands on an endpoint.
 
 An authenticated upload and pilot installation remain to be verified after review,
 merge and deployment approval. The Classic API resource routes were checked against

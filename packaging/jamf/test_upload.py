@@ -80,7 +80,7 @@ class UploadTests(unittest.TestCase):
         self.assertEqual([call[0] for call in api.calls], ["GET", "POST", "POST", "GET", "GET"])
         metadata = api.calls[1][2]
         self.assertNotIn("sha256", metadata)  # Must be computed by Jamf after receiving bytes.
-        self.assertEqual(metadata["priority"], 20)
+        self.assertEqual(metadata["priority"], 30)
         self.assertFalse(metadata["rebootRequired"])
         self.assertIn(b'name="file"', api.calls[2][2])
         self.assertIn(b"fixture", api.calls[2][2])

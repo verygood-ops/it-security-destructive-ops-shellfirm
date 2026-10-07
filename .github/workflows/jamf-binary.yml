@@ -45,10 +45,10 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup target add --toolchain stable aarch64-apple-darwin
           python3 -m unittest discover -s packaging/jamf -p 'test_*.py' -v
-      - name: Test and compile ShellFirm with embedded checks
+      - name: Test and compile ShellFirm with managed checks
         run: |
           cargo +stable test --locked --workspace --lib
-          cargo +stable build --locked --release --package shellfirm --bin shellfirm --target aarch64-apple-darwin
+          SHELLFIRM_MANAGED_CHECKS_PATH="/Library/Application Support/VGS/ShellFirm/checks/default-checks.yaml" cargo +stable build --locked --release --package shellfirm --bin shellfirm --target aarch64-apple-darwin
           strip target/aarch64-apple-darwin/release/shellfirm
           codesign --force --sign - target/aarch64-apple-darwin/release/shellfirm
           codesign --verify --strict target/aarch64-apple-darwin/release/shellfirm

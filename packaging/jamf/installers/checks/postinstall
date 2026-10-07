@@ -1,0 +1,23 @@
+#!/bin/zsh
+set -eu
+setopt pipefail
+[[ "${3:-/}" == "/" ]] || { echo 'VGS ShellFirm requires the boot volume.' >&2; exit 1; }
+readonly target_dir='/Library/Application Support/VGS/ShellFirm/checks'
+readonly target="$target_dir/default-checks.yaml"
+readonly expected_sha='@CHECKS_SHA256@'
+fail() { echo "VGS ShellFirm default checks: $*" >&2; exit 1; }
+for directory in '/Library/Application Support/VGS' '/Library/Application Support/VGS/ShellFirm' "$target_dir"; do
+  [[ ! -L "$directory" ]] || fail "symlinked managed directory: $directory"
+  if [[ -e "$directory" ]]; then
+    [[ -d "$directory" && "$(/usr/bin/stat -f '%u' "$directory")" == 0 ]] || fail "unsafe directory: $directory"
+    mode="$(/usr/bin/stat -f '%Lp' "$directory")"
+    (( (8#$mode & 0022) == 0 )) || fail "writable managed directory: $directory"
+  fi
+done
+[[ ! -L "$target" ]] || fail 'catalog must not be a symlink'
+[[ -f "$target" ]] || fail 'catalog was not installed'
+/usr/sbin/chown root:wheel "$target"
+/bin/chmod 0644 "$target"
+[[ "$(/usr/bin/shasum -a 256 "$target" | /usr/bin/awk '{print $1}')" == "$expected_sha" ]] || fail 'catalog checksum mismatch'
+echo 'VGS ShellFirm default checks @PACKAGE_VERSION@ installed. Activation validates the runtime loader after all packages finish.'
+exit 0

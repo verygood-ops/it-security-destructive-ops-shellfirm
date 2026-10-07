@@ -16,7 +16,18 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "packaging/jamf"
 MANAGED = Path("Library/Application Support/VGS/ShellFirm")
-PAYLOADS = {"binary": MANAGED / "bin/shellfirm", "policy": MANAGED / "policy/.shellfirm.yaml"}
+PAYLOADS = {"checks": MANAGED / "checks/default-checks.yaml",
+            "binary": MANAGED / "bin/shellfirm", "policy": MANAGED / "policy/.shellfirm.yaml"}
+MANAGED_CHECKS = "/" + str(PAYLOADS["checks"])
+
+
+def catalog():
+    """Deterministic complete catalog; same order as upstream build.rs."""
+    paths = sorted((ROOT / "shellfirm/checks").glob("*.yaml"))
+    if not paths or any(path.is_symlink() or not path.is_file() for path in paths):
+        raise ValueError("Expected regular default-check YAML files")
+    return "".join(path.read_text().rstrip() + "\n" for path in paths).encode()
+
 
 
 def sha256(path):
@@ -72,12 +83,20 @@ def build(kind, binary, output, commit):
     expected_version = f"shellfirm {app}"
     if run(binary, "--version") != expected_version:
         raise ValueError("Binary version differs from Cargo.toml")
+    if run(binary, "default-checks", "source") != MANAGED_CHECKS:
+        raise ValueError("Jamf binary must load managed checks and contain no embedded default catalog")
+    checks = catalog()
+    checks_sha = hashlib.sha256(checks).hexdigest()
+    with tempfile.TemporaryDirectory(prefix="shellfirm-catalog-") as tmp:
+        candidate = Path(tmp) / "default-checks.yaml"
+        candidate.write_bytes(checks)
+        print(run(binary, "default-checks", "validate", candidate))
     # CLI validation never runs a risky command or modifies the user's shell.
     policy = ROOT / ".shellfirm.yaml"
     print(run(binary, "policy", "validate", policy))
     policy_sha = sha256(policy)
     source = binary if kind == "binary" else policy
-    payload_sha = sha256(source)
+    payload_sha = checks_sha if kind == "checks" else sha256(source)
     output.mkdir(parents=True, exist_ok=True)
     suffix = "-arm64" if kind == "binary" else ""
     name = f"VGS-ShellFirm-{kind.title()}-{release[kind]}{suffix}-unsigned.pkg"
@@ -88,12 +107,15 @@ def build(kind, binary, output, commit):
         staging = Path(tmp) / "root"
         target = staging / PAYLOADS[kind]
         target.parent.mkdir(parents=True)
-        shutil.copyfile(source, target)
+        if kind == "checks":
+            target.write_bytes(checks)
+        else:
+            shutil.copyfile(source, target)
         target.chmod(0o755 if kind == "binary" else 0o644)
         scripts = Path(tmp) / "scripts"
         scripts.mkdir()
         replacements = {"@APP_VERSION@": app, "@PACKAGE_VERSION@": release[kind],
-                        "@POLICY_SHA256@": policy_sha}
+                        "@POLICY_SHA256@": policy_sha, "@CHECKS_SHA256@": checks_sha}
         for template in (CONFIG / "installers" / kind).iterdir():
             rendered = template.read_text()
             for key, value in replacements.items():
@@ -112,8 +134,10 @@ def build(kind, binary, output, commit):
         "package_identifier": f"io.vgs.shellfirm.{kind}",
         "package_sha256": sha256(package), "payload_sha256": payload_sha,
         "source_commit": commit, "application_version": app,
-        "policy_sha256": policy_sha, "unsigned": True,
-        "promotion": ({"activation_expected_version": expected_version,
+        "policy_sha256": policy_sha, "checks_sha256": checks_sha, "checks_source": MANAGED_CHECKS, "unsigned": True,
+        "promotion": ({"health_check_checks_receipt": release["checks"],
+                       "health_check_checks_sha256": checks_sha} if kind == "checks" else
+                      {"activation_expected_version": expected_version,
                        "health_check_binary_receipt": release["binary"]} if kind == "binary" else
                       {"activation_expected_policy_sha": policy_sha,
                        "health_check_policy_receipt": release["policy"],

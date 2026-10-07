@@ -5,6 +5,7 @@ pub mod checks;
 pub mod config;
 pub mod context;
 mod data;
+pub mod managed_checks;
 pub mod env;
 pub mod error;
 #[cfg(feature = "llm")]
