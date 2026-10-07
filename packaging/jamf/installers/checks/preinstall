@@ -1,0 +1,25 @@
+#!/bin/zsh
+set -eu
+setopt pipefail
+[[ "${3:-/}" == "/" ]] || { echo 'VGS ShellFirm requires the boot volume.' >&2; exit 1; }
+readonly target_dir='/Library/Application Support/VGS/ShellFirm/checks'
+readonly target="$target_dir/default-checks.yaml"
+readonly expected_sha='@CHECKS_SHA256@'
+fail() { echo "VGS ShellFirm default checks: $*" >&2; exit 1; }
+for directory in '/Library/Application Support/VGS' '/Library/Application Support/VGS/ShellFirm' "$target_dir"; do
+  [[ ! -L "$directory" ]] || fail "symlinked managed directory: $directory"
+  if [[ -e "$directory" ]]; then
+    [[ -d "$directory" && "$(/usr/bin/stat -f '%u' "$directory")" == 0 ]] || fail "unsafe directory: $directory"
+    mode="$(/usr/bin/stat -f '%Lp' "$directory")"
+    (( (8#$mode & 0022) == 0 )) || fail "writable managed directory: $directory"
+  fi
+done
+[[ ! -L "$target" ]] || fail 'catalog must not be a symlink'
+if [[ -e "$target" ]]; then
+  [[ -f "$target" ]] || fail 'catalog is not a regular file'
+  current_sha="$(/usr/bin/shasum -a 256 "$target" | /usr/bin/awk '{print $1}')"
+  if [[ "$current_sha" != "$expected_sha" ]]; then
+    /usr/sbin/pkgutil --pkg-info io.vgs.shellfirm.checks >/dev/null 2>&1 || fail 'existing unowned catalog preserved'
+  fi
+fi
+exit 0
