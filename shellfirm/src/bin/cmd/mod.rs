@@ -4,6 +4,7 @@ pub mod command;
 pub mod completions_cmd;
 pub mod config;
 pub mod default;
+pub mod default_checks_cmd;
 pub mod init;
 #[cfg(feature = "mcp")]
 pub mod mcp_cmd;
