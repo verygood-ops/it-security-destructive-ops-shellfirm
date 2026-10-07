@@ -7,7 +7,7 @@ set -o pipefail
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export LC_ALL=C
 
-readonly REVISION='2026.10.06-release-aware-1'
+readonly REVISION='2026.10.07-separate-checks-2'
 readonly BINARY='/Library/Application Support/VGS/ShellFirm/bin/shellfirm'
 readonly COMMAND='/usr/local/bin/shellfirm'
 readonly POLICY='/Library/Application Support/VGS/ShellFirm/policy/.shellfirm.yaml'
@@ -17,6 +17,9 @@ readonly JAMF_USER="${3:-}"
 BINARY_VERSION='0.3.10.2'
 POLICY_VERSION='2026.08.1.1'
 BINARY_SHA256=''
+CHECKS_VERSION=''
+CHECKS_SHA256=''
+readonly CHECKS='/Library/Application Support/VGS/ShellFirm/checks/default-checks.yaml'
 release_error=''
 readonly RELEASE_STATE='/Library/Application Support/VGS/ShellFirm/state/approved-release.plist'
 
@@ -24,7 +27,7 @@ readonly RELEASE_STATE='/Library/Application Support/VGS/ShellFirm/state/approve
 # payload hashes in a root-owned descriptor written only after activation passes.
 # Macs awaiting their first CI release retain the reviewed baseline expectations.
 load_release() {
-    local directory owner mode value
+    local directory owner mode value schema
     [ ! -e "$RELEASE_STATE" ] && [ ! -L "$RELEASE_STATE" ] && return 0
     for directory in '/Library/Application Support/VGS' '/Library/Application Support/VGS/ShellFirm' '/Library/Application Support/VGS/ShellFirm/state'; do
         [ -d "$directory" ] && [ ! -L "$directory" ] || return 1
@@ -34,7 +37,14 @@ load_release() {
     done
     [ -f "$RELEASE_STATE" ] && [ ! -L "$RELEASE_STATE" ] || return 1
     [ "$(/usr/bin/stat -f '%u:%Lp' "$RELEASE_STATE")" = '0:644' ] || return 1
-    [ "$(/usr/bin/plutil -extract schema raw -o - "$RELEASE_STATE")" = 1 ] || return 1
+    schema=$(/usr/bin/plutil -extract schema raw -o - "$RELEASE_STATE") || return 1
+    case "$schema" in 1|2) ;; *) return 1 ;; esac
+    if [ "$schema" = 2 ]; then
+        CHECKS_VERSION=$(/usr/bin/plutil -extract checks_version raw -o - "$RELEASE_STATE") || return 1
+        CHECKS_SHA256=$(/usr/bin/plutil -extract checks_sha256 raw -o - "$RELEASE_STATE") || return 1
+        [[ "$CHECKS_VERSION" =~ ^[0-9]+(\.[0-9]+){2,3}$ ]] || return 1
+        [[ "$CHECKS_SHA256" =~ ^[0-9a-f]{64}$ ]] || return 1
+    fi
     BINARY_VERSION=$(/usr/bin/plutil -extract binary_version raw -o - "$RELEASE_STATE") || return 1
     POLICY_VERSION=$(/usr/bin/plutil -extract policy_version raw -o - "$RELEASE_STATE") || return 1
     BINARY_SHA256=$(/usr/bin/plutil -extract binary_sha256 raw -o - "$RELEASE_STATE") || return 1
@@ -49,7 +59,7 @@ load_release() {
 if ! load_release 2>/dev/null; then
     release_error='approved release descriptor is invalid, unreadable, or not securely owned'
 fi
-passed=0 failed=0 not_checked=0
+passed=0 failed=0 not_checked=0 not_applicable=0
 reason='' target_user='' target_uid='' target_home=''
 
 problem() { reason="$1"; return 1; }
@@ -95,6 +105,22 @@ check_policy() {
     }
     [ "$digest" = "$POLICY_SHA256" ] || { problem "managed policy does not match activated release $POLICY_VERSION"; return 1; }
     reason='package receipt and matching policy file present'
+}
+
+check_default_checks() {
+    local directory mode
+    [ -z "$release_error" ] || { problem "$release_error"; return 1; }
+    if [ -z "$CHECKS_VERSION" ]; then reason='installed baseline uses embedded checks'; return 3; fi
+    receipt_matches 'io.vgs.shellfirm.checks' "$CHECKS_VERSION" || return 1
+    for directory in '/Library/Application Support/VGS' '/Library/Application Support/VGS/ShellFirm' '/Library/Application Support/VGS/ShellFirm/checks'; do
+        [ -d "$directory" ] && [ ! -L "$directory" ] || { problem 'unsafe checks directory'; return 1; }
+        mode=$(/usr/bin/stat -f '%Lp' "$directory") || return 1
+        [ "$(/usr/bin/stat -f '%u' "$directory")" = 0 ] && [ $((8#$mode & 0022)) -eq 0 ] || { problem 'insecure checks directory'; return 1; }
+    done
+    [ -f "$CHECKS" ] && [ ! -L "$CHECKS" ] || { problem 'default-check catalog missing'; return 1; }
+    [ "$(/usr/bin/stat -f '%u:%Lp' "$CHECKS")" = '0:644' ] || { problem 'default-check catalog permissions differ'; return 1; }
+    [ "$(/usr/bin/shasum -a 256 "$CHECKS" | /usr/bin/awk '{print $1}')" = "$CHECKS_SHA256" ] || { problem 'default-check catalog checksum differs'; return 1; }
+    reason="package receipt $CHECKS_VERSION and approved default-check catalog verified"
 }
 
 supported_user() {
@@ -149,6 +175,9 @@ check_hooks() {
     as_user /bin/test -r "$POLICY" && as_user /bin/test -x "$COMMAND" || {
         problem "user=$target_user: managed policy or binary inaccessible"; return 1;
     }
+    if [ -n "$CHECKS_VERSION" ]; then
+        as_user /bin/test -r "$CHECKS" || { problem "user=$target_user: default checks inaccessible"; return 1; }
+    fi
     startup_configured "$target_home/.zshrc" zsh || { problem "user=$target_user: Zsh hook missing or unreadable"; return 1; }
     startup_configured "$target_home/.bashrc" bash || { problem "user=$target_user: Bash hook missing or unreadable"; return 1; }
     startup_configured "$target_home/.bash_profile" login || { problem "user=$target_user: Bash login hook missing or unreadable"; return 1; }
@@ -162,6 +191,7 @@ report_check() {
     else
         result=$?
         if [ "$result" -eq 2 ]; then status='NOT_CHECKED'; not_checked=$((not_checked+1))
+        elif [ "$result" -eq 3 ]; then status='NOT_APPLICABLE'; not_applicable=$((not_applicable+1))
         else status='FAIL'; failed=$((failed+1)); fi
     fi
     /usr/bin/printf '%s=%s | %s | %s\n' "$key" "$status" "$label" "$reason"
@@ -171,10 +201,11 @@ report_check() {
 report_check CHECK_1_BINARY "VGS ShellFirm Binary $BINARY_VERSION (Apple Silicon)" check_binary
 report_check CHECK_2_POLICY "VGS ShellFirm Policy $POLICY_VERSION" check_policy
 report_check CHECK_3_USER_HOOKS 'VGS ShellFirm - User Hooks' check_hooks
+report_check CHECK_4_DEFAULT_CHECKS "VGS ShellFirm Default Checks ${CHECKS_VERSION:-embedded}" check_default_checks
 if [ "$failed" -gt 0 ]; then
     /bin/echo "RESULT=FAIL | passed=$passed failed=$failed not_checked=$not_checked"; exit 1
 elif [ "$not_checked" -gt 0 ]; then
     /bin/echo "RESULT=INCOMPLETE | passed=$passed failed=0 not_checked=$not_checked"; exit 2
 fi
-/bin/echo 'RESULT=PASS | 3/3 checks passed'
+/bin/echo "RESULT=PASS | passed=$passed failed=0 not_checked=0 not_applicable=$not_applicable"
 exit 0
