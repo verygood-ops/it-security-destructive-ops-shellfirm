@@ -107,17 +107,17 @@ pub(crate) fn all_checks_cached() -> Result<&'static [Check]> {
     static CHECKS: OnceLock<std::result::Result<Vec<Check>, String>> = OnceLock::new();
     CHECKS
         .get_or_init(|| {
-            let result = match option_env!("SHELLFIRM_MANAGED_CHECKS_PATH") {
-                Some(path) => crate::managed_checks::load(std::path::Path::new(path)),
-                None => crate::managed_checks::parse(ALL_CHECKS),
-            };
+            let result = option_env!("SHELLFIRM_MANAGED_CHECKS_PATH").map_or_else(
+                || crate::managed_checks::parse(ALL_CHECKS),
+                |path| crate::managed_checks::load(std::path::Path::new(path)),
+            );
             result.map_err(|error| format!("Default checks could not be loaded: {error}"))
         })
         .as_deref()
         .map_err(|message| crate::error::Error::Config(message.clone()))
 }
 
-/// Return all configured default ShellFirm check patterns
+/// Return all configured default `ShellFirm` check patterns
 ///
 /// # Errors
 /// when has an error when parsing check str to [`Check`] list
