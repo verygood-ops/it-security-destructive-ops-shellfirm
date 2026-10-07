@@ -634,7 +634,7 @@ impl Settings {
             .collect();
         // Filter from the static cache directly — only clone checks that pass
         // all filters, instead of cloning all ~100 checks then discarding.
-        Ok(checks::all_checks_cached()
+        Ok(checks::all_checks_cached()?
             .iter()
             .filter(|c| enabled.contains(c.from.as_str()))
             .filter(|c| !disabled.contains(c.from.as_str()))
@@ -668,7 +668,7 @@ impl Settings {
                 && !ignores.contains(c.id.as_str())
         };
 
-        let mut out: Vec<checks::Check> = checks::all_checks_cached()
+        let mut out: Vec<checks::Check> = checks::all_checks_cached()?
             .iter()
             .filter(|c| keep(c))
             .cloned()
