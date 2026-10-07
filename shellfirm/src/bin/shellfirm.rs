@@ -18,7 +18,8 @@ fn main() {
         .subcommand(cmd::policy_cmd::command())
         .subcommand(cmd::check_cmd::command())
         .subcommand(cmd::completions_cmd::command())
-        .subcommand(cmd::status_cmd::command());
+        .subcommand(cmd::status_cmd::command())
+        .subcommand(cmd::default_checks_cmd::command());
 
     #[cfg(feature = "mcp")]
     {
@@ -57,6 +58,11 @@ fn main() {
     // Handle policy command early (doesn't need full config)
     if let Some(("policy", sub_matches)) = matches.subcommand() {
         shellfirm_exit(cmd::policy_cmd::run(sub_matches));
+    }
+
+    // Managed-check diagnostics and validation must work before user setup.
+    if let Some(("default-checks", sub_matches)) = matches.subcommand() {
+        shellfirm_exit(cmd::default_checks_cmd::run(sub_matches));
     }
 
     // load configuration
@@ -166,7 +172,7 @@ fn shellfirm_exit(res: Result<CmdExit>) {
             cmd.code
         }
         Err(e) => {
-            tracing::debug!("{e:?}");
+            eprintln!("ShellFirm error: {e}");
             DEFAULT_ERR_EXIT_CODE
         }
     };
