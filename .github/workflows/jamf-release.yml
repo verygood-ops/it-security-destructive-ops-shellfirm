@@ -46,11 +46,13 @@ jobs:
           python3 -m unittest discover -s packaging/jamf -p 'test_*.py' -v
           cargo +stable clippy --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W rust-2018-idioms
           cargo +stable test --locked --workspace
-          cargo +stable build --locked --release --package shellfirm --bin shellfirm --target aarch64-apple-darwin
+          SHELLFIRM_MANAGED_CHECKS_PATH="/Library/Application Support/VGS/ShellFirm/checks/default-checks.yaml" cargo +stable build --locked --release --package shellfirm --bin shellfirm --target aarch64-apple-darwin
           strip target/aarch64-apple-darwin/release/shellfirm
           codesign --force --sign - target/aarch64-apple-darwin/release/shellfirm
           codesign --verify --strict target/aarch64-apple-darwin/release/shellfirm
-      - name: Build both installers and matching activation expectations
+      - name: Verify managed checks load independently of the binary
+        run: python3 packaging/jamf/verify_managed_runtime.py target/aarch64-apple-darwin/release/shellfirm
+      - name: Build three installers and matching activation expectations
         env:
           RELEASE_RUN: ${{ github.run_number }}
           RELEASE_ATTEMPT: ${{ github.run_attempt }}
