@@ -1,0 +1,103 @@
+name: Jamf approved pilot release
+
+on:
+  pull_request:
+    paths:
+      - 'shellfirm/**'
+      - 'Cargo.*'
+      - 'build.rs'
+      - '.cargo/**'
+      - '.shellfirm.yaml'
+      - 'packaging/jamf/**'
+      - '.github/workflows/*.yml'
+      - '.github/workflows/*.yaml'
+  workflow_run:
+    workflows: [Tests]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  build:
+    name: Validate and package pilot release
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_COMMIT }}
+          persist-credentials: false
+      - name: Validate release logic and compile approved sources
+        run: |
+          test "$(uname -m)" = arm64
+          rustup toolchain install stable --profile minimal
+          rustup target add --toolchain stable aarch64-apple-darwin
+          python3 -m unittest discover -s packaging/jamf -p 'test_*.py' -v
+          cargo +stable clippy --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W rust-2018-idioms
+          cargo +stable test --locked --workspace
+          cargo +stable build --locked --release --package shellfirm --bin shellfirm --target aarch64-apple-darwin
+          strip target/aarch64-apple-darwin/release/shellfirm
+          codesign --force --sign - target/aarch64-apple-darwin/release/shellfirm
+          codesign --verify --strict target/aarch64-apple-darwin/release/shellfirm
+      - name: Build both installers and matching activation expectations
+        env:
+          RELEASE_RUN: ${{ github.run_number }}
+          RELEASE_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          python3 packaging/jamf/release.py build --directory dist/release --binary target/aarch64-apple-darwin/release/shellfirm --commit "$SOURCE_COMMIT" --run-number "$RELEASE_RUN" --attempt "$RELEASE_ATTEMPT"
+          rustc +stable --version > dist/release/build-environment.txt
+          sw_vers >> dist/release/build-environment.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jamf-release-${{ github.run_id }}
+          path: dist/release/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
+
+  deploy:
+    name: Approve and deploy to IT Security pilot
+    needs: build
+    if: github.event_name == 'workflow_run' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: jamf
+    concurrency:
+      group: jamf-package-uploads
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_COMMIT }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: jamf-release-${{ github.run_id }}
+          path: dist/release
+      - name: Verify packages and enable the approved pilot release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JAMF_URL: ${{ vars.JAMF_URL }}
+          JAMF_CATEGORY_ID: ${{ vars.JAMF_CATEGORY_ID }}
+          JAMF_CLIENT_ID: ${{ secrets.JAMF_CLIENT_ID }}
+          JAMF_CLIENT_SECRET: ${{ secrets.JAMF_CLIENT_SECRET }}
+        run: python3 packaging/jamf/release.py deploy --directory dist/release --commit "$SOURCE_COMMIT"
+      - name: Save rollout identifiers
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jamf-rollout-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/release/deployment-result.json
+          if-no-files-found: ignore
+          retention-days: 90

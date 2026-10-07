@@ -85,7 +85,7 @@ def package_metadata(manifest, category_id):
                        (" (Apple Silicon)" if kind == "binary" else ""),
         "fileName": manifest["file_name"], "categoryId": category_id,
         "priority": 10 if kind == "binary" else 20,
-        "info": "VGS ShellFirm unsigned pilot installer. Manual deployment promotion required.",
+        "info": "VGS ShellFirm unsigned pilot installer. Deployment is managed by a separate promotion step.",
         "notes": f"Source commit: {manifest['source_commit']}; "
                  f"Package SHA-256: {manifest['package_sha256']}; "
                  f"Policy SHA-256: {manifest['policy_sha256']}. "

@@ -1,0 +1,10 @@
+{
+  "jamf_url": "https://getverygood.jamfcloud.com",
+  "repository": "verygood-ops/it-security-destructive-ops-shellfirm",
+  "pilot_group_id": "259",
+  "pilot_group_name": "IT Security",
+  "baseline_install_policy_id": "409",
+  "baseline_install_policy_name": "VGS ShellFirm 2026.08.1 - IT Security Pilot",
+  "baseline_health_policy_id": "410",
+  "baseline_health_policy_name": "VGS ShellFirm - Weekly Health Check - IT Security"
+}
