@@ -1,6 +1,17 @@
 use std::{env, fs, fs::File, io::prelude::*, path::Path};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("cargo:rerun-if-env-changed=SHELLFIRM_MANAGED_CHECKS_PATH");
+    // Jamf builds ship the checks separately. Do not read or embed their contents.
+    if let Ok(path) = env::var("SHELLFIRM_MANAGED_CHECKS_PATH") {
+        if !Path::new(&path).is_absolute() {
+            return Err("SHELLFIRM_MANAGED_CHECKS_PATH must be absolute".into());
+        }
+        let out_dir = env::var("OUT_DIR")?;
+        fs::write(Path::new(&out_dir).join("all-checks.yaml"), "[]\n")?;
+        fs::write(Path::new(&out_dir).join("all_the_files.rs"), "[]\n")?;
+        return Ok(());
+    }
     println!("cargo:rerun-if-changed=checks/");
 
     let out_dir = env::var("OUT_DIR")?;
