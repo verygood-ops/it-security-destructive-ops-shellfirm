@@ -59,7 +59,7 @@ def load_artifact(directory, expected_commit):
     manifest = json.loads((directory / "manifest.json").read_text())
     kind = manifest["kind"]
     version = manifest["package_version"]
-    if kind not in ("binary", "policy") or not re.fullmatch(r"\d+(?:\.\d+){2,3}", version):
+    if kind not in ("binary", "checks", "policy") or not re.fullmatch(r"\d+(?:\.\d+){2,3}", version):
         raise ValueError("Invalid artifact kind or version")
     if not re.fullmatch(r"[0-9a-f]{40}", expected_commit) or manifest["source_commit"] != expected_commit:
         raise ValueError("Artifact does not belong to this workflow commit")
@@ -84,7 +84,7 @@ def package_metadata(manifest, category_id):
         "packageName": f"VGS ShellFirm {kind.title()} {manifest['package_version']}" +
                        (" (Apple Silicon)" if kind == "binary" else ""),
         "fileName": manifest["file_name"], "categoryId": category_id,
-        "priority": 10 if kind == "binary" else 20,
+        "priority": {"checks": 10, "binary": 20, "policy": 30}[kind],
         "info": "VGS ShellFirm unsigned pilot installer. Deployment is managed by a separate promotion step.",
         "notes": f"Source commit: {manifest['source_commit']}; "
                  f"Package SHA-256: {manifest['package_sha256']}; "
