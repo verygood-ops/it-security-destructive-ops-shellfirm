@@ -99,21 +99,30 @@ pub struct Check {
     pub severity: Severity,
 }
 
-/// Return a cached reference to all built-in check patterns.
+/// Return the configured default check patterns, cached for this process.
 ///
 /// The YAML is parsed and regexes are compiled exactly once (on first call).
 /// Subsequent calls return a reference to the cached static slice.
-pub(crate) fn all_checks_cached() -> &'static [Check] {
-    static CHECKS: OnceLock<Vec<Check>> = OnceLock::new();
-    CHECKS.get_or_init(|| serde_yaml::from_str(ALL_CHECKS).expect("built-in checks are valid YAML"))
+pub(crate) fn all_checks_cached() -> Result<&'static [Check]> {
+    static CHECKS: OnceLock<std::result::Result<Vec<Check>, String>> = OnceLock::new();
+    CHECKS
+        .get_or_init(|| {
+            let result = match option_env!("SHELLFIRM_MANAGED_CHECKS_PATH") {
+                Some(path) => crate::managed_checks::load(std::path::Path::new(path)),
+                None => crate::managed_checks::parse(ALL_CHECKS),
+            };
+            result.map_err(|error| format!("Default checks could not be loaded: {error}"))
+        })
+        .as_deref()
+        .map_err(|message| crate::error::Error::Config(message.clone()))
 }
 
-/// Return all built-in shellfirm check patterns
+/// Return all configured default ShellFirm check patterns
 ///
 /// # Errors
 /// when has an error when parsing check str to [`Check`] list
 pub fn get_all() -> Result<Vec<Check>> {
-    Ok(all_checks_cached().to_vec())
+    Ok(all_checks_cached()?.to_vec())
 }
 
 /// Load custom checks from YAML files in a directory.
