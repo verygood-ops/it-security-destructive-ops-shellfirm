@@ -62,7 +62,7 @@ class ReleaseTests(unittest.TestCase):
         self.api = FakeJamf()
         self.release = {'release_id': 'r10.1 ' + 'a'*12}
     def promote(self, **kwargs):
-        return release.promote(self.api, self.release, ['1400','1401'], '#!/bin/zsh\necho activate\n', '#!/bin/bash\necho health\n', **kwargs)
+        return release.promote(self.api, self.release, ['1400','1401','1402'], '#!/bin/zsh\necho activate\n', '#!/bin/bash\necho health\n', **kwargs)
     def assert_no_writes(self):
         self.assertFalse(any(m in ('POST','PUT','DELETE') for m,_,_ in self.api.calls))
     def test_success_enables_install_last_and_retains_recoverable_history(self):
@@ -135,22 +135,26 @@ class ReleaseTests(unittest.TestCase):
     def test_versions_are_unique_and_increasing(self):
         date = datetime(2026,10,6,tzinfo=timezone.utc)
         versions = [release.release_versions('0.3.10',r,a,date) for r,a in [(1,1),(1,2),(2,1)]]
-        self.assertEqual(versions[0],{'binary':'0.3.10.1101','policy':'2026.10.6.1101'})
+        self.assertEqual(versions[0],{'binary':'0.3.10.1101','checks':'2026.10.6.1101','policy':'2026.10.6.1101'})
         suffixes = [int(v['binary'].split('.')[-1]) for v in versions]
         self.assertEqual(suffixes,sorted(set(suffixes)))
         with self.assertRaises(ValueError): release.release_versions('0.3.10',1,100,date)
     def test_pair_renders_exact_payload_expectations_and_valid_shell(self):
-        binary = {'application_version':'0.3.10','policy_sha256':'b'*64,'payload_sha256':'c'*64,'package_version':'0.3.10.1101'}
-        policy = {'application_version':'0.3.10','payload_sha256':'b'*64,'package_version':'2026.10.6.1101'}
+        binary = {'kind':'binary','checks_source':release.builder.MANAGED_CHECKS,'checks_sha256':'d'*64,'application_version':'0.3.10','policy_sha256':'b'*64,'payload_sha256':'c'*64,'package_version':'0.3.10.1101'}
+        policy = {'kind':'policy','application_version':'0.3.10','payload_sha256':'b'*64,'package_version':'2026.10.6.1101'}
+        checks = {'kind':'checks','checks_source':release.builder.MANAGED_CHECKS,'application_version':'0.3.10','payload_sha256':'d'*64,'package_version':'2026.10.6.1101'}
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
-            with patch.object(release,'load_artifact',side_effect=[(binary,None),(policy,None)]):
+            with patch.object(release,'load_artifact',side_effect=[(binary,None),(policy,None),(checks,None)]):
                 manifest = release.prepare_release(directory,'a'*40,1,1)
             activation = (directory/'activation.zsh').read_text()
             self.assertNotIn('@APP_VERSION@',activation)
             self.assertEqual(manifest['activation_sha256'],release.digest(activation))
             xml = activation.split("<<'VGS_APPROVED_RELEASE'\n",1)[1].split('\nVGS_APPROVED_RELEASE',1)[0]
             state = plistlib.loads(xml.encode())
+            self.assertEqual(state['schema'],2)
+            self.assertEqual(state['checks_sha256'],'d'*64)
+            self.assertIn('CHECK_4_DEFAULT_CHECKS',activation)
             self.assertEqual(state['binary_sha256'],'c'*64)
             self.assertEqual(state['policy_version'],'2026.10.6.1101')
             self.assertIn('CHECK_3_USER_HOOKS',activation)
@@ -158,7 +162,7 @@ class ReleaseTests(unittest.TestCase):
             if Path('/bin/zsh').exists(): subprocess.run(['/bin/zsh','-n',str(directory/'activation.zsh')],check=True)
     def test_incompatible_pair_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with patch.object(release,'load_artifact',side_effect=[({'application_version':'0.3.10','policy_sha256':'a'*64},None),({'application_version':'0.3.10','payload_sha256':'b'*64},None)]):
+            with patch.object(release,'load_artifact',side_effect=[({'application_version':'0.3.10','policy_sha256':'a'*64},None),({'application_version':'0.3.10','payload_sha256':'b'*64},None),({},None)]):
                 with self.assertRaisesRegex(ValueError,'compatible release'): release.prepare_release(Path(tmp),'a'*40,1,1)
 
 if __name__ == '__main__': unittest.main()
