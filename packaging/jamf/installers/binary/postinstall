@@ -34,5 +34,7 @@ if [[ "${actual_version}" != "${expected_version}" ]]; then
   exit 1
 fi
 
+[[ "$("$managed_binary" default-checks source)" == '/Library/Application Support/VGS/ShellFirm/checks/default-checks.yaml' ]] || exit 1
+"$managed_binary" default-checks status || exit 1
 /bin/echo "VGS ShellFirm ${expected_version#shellfirm } installed at ${managed_binary} and exposed at ${command_path}."
 exit 0
