@@ -14,6 +14,10 @@ import urllib.parse
 import urllib.request
 
 
+# Jamf accepts priorities 1 through 20; lower numbers install first.
+PACKAGE_PRIORITIES = {"checks": 5, "binary": 10, "policy": 20}
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None  # Never forward credentials to another destination.
@@ -79,12 +83,18 @@ def load_artifact(directory, expected_commit):
 def package_metadata(manifest, category_id):
     if not re.fullmatch(r"-1|\d+", category_id):
         raise ValueError("JAMF_CATEGORY_ID must be a numeric category ID, or -1 for None")
+    # Validate all three before the first package API call, avoiding partial uploads.
+    priorities = [PACKAGE_PRIORITIES[kind] for kind in ("checks", "binary", "policy")]
+    if any(type(priority) is not int or not 1 <= priority <= 20 for priority in priorities):
+        raise ValueError("Jamf package priorities must be integers from 1 to 20")
+    if not priorities[0] < priorities[1] < priorities[2]:
+        raise ValueError("Jamf package priorities must install checks before binary before policy")
     kind = manifest["kind"]
     return {
         "packageName": f"VGS ShellFirm {kind.title()} {manifest['package_version']}" +
                        (" (Apple Silicon)" if kind == "binary" else ""),
         "fileName": manifest["file_name"], "categoryId": category_id,
-        "priority": {"checks": 10, "binary": 20, "policy": 30}[kind],
+        "priority": PACKAGE_PRIORITIES[kind],
         "info": "VGS ShellFirm unsigned pilot installer. Deployment is managed by a separate promotion step.",
         "notes": f"Source commit: {manifest['source_commit']}; "
                  f"Package SHA-256: {manifest['package_sha256']}; "
