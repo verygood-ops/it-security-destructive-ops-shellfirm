@@ -181,19 +181,16 @@ impl InputBuffer {
             QuoteState::EscapedNormal => {
                 self.buf.push(byte);
                 self.state = QuoteState::Normal;
-                BufferResult::Buffered
             }
             QuoteState::EscapedDouble => {
                 self.buf.push(byte);
                 self.state = QuoteState::DoubleQuoted;
-                BufferResult::Buffered
             }
             QuoteState::SingleQuoted => {
                 self.buf.push(byte);
                 if byte == b'\'' {
                     self.state = QuoteState::Normal;
                 }
-                BufferResult::Buffered
             }
             QuoteState::DoubleQuoted => {
                 self.buf.push(byte);
@@ -202,7 +199,6 @@ impl InputBuffer {
                 } else if byte == b'\\' {
                     self.state = QuoteState::EscapedDouble;
                 }
-                BufferResult::Buffered
             }
             QuoteState::Normal => {
                 if byte == b'\\' {
@@ -228,9 +224,9 @@ impl InputBuffer {
                     return BufferResult::Statement(stmt);
                 }
                 self.buf.push(byte);
-                BufferResult::Buffered
             }
         }
+        BufferResult::Buffered
     }
 
     /// Reset the buffer and quote state.

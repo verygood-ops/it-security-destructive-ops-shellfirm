@@ -1,0 +1,38 @@
+#!/bin/zsh
+set -eu
+
+[[ "${3:-/}" == "/" ]] || { echo "VGS ShellFirm requires the boot volume." >&2; exit 1; }
+
+readonly managed_binary="/Library/Application Support/VGS/ShellFirm/bin/shellfirm"
+readonly command_directory="/usr/local/bin"
+readonly command_path="${command_directory}/shellfirm"
+readonly expected_version="shellfirm @APP_VERSION@"
+
+if [[ ! -x "${managed_binary}" ]]; then
+  /bin/echo "VGS ShellFirm verification failed: the managed binary is missing." >&2
+  exit 1
+fi
+
+/bin/mkdir -p "${command_directory}"
+/usr/sbin/chown root:wheel "${command_directory}"
+/bin/chmod 0755 "${command_directory}"
+
+if [[ ! -e "${command_path}" && ! -L "${command_path}" ]]; then
+  /bin/ln -s "${managed_binary}" "${command_path}"
+fi
+
+if [[ ! -L "${command_path}" || "$(/usr/bin/readlink "${command_path}")" != "${managed_binary}" ]]; then
+  /bin/echo "VGS ShellFirm verification failed: ${command_path} is not the managed ShellFirm link." >&2
+  exit 1
+fi
+
+/usr/sbin/chown -h root:wheel "${command_path}"
+
+actual_version="$("${command_path}" --version 2>/dev/null)" || actual_version=""
+if [[ "${actual_version}" != "${expected_version}" ]]; then
+  /bin/echo "VGS ShellFirm verification failed: expected ${expected_version}, found ${actual_version:-unknown}." >&2
+  exit 1
+fi
+
+/bin/echo "VGS ShellFirm ${expected_version#shellfirm } installed at ${managed_binary} and exposed at ${command_path}."
+exit 0

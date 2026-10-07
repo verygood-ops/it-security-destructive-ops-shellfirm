@@ -13,3 +13,8 @@
 .DS_Store
 shellfirm/tmp/*
 .superpowers/
+
+# Jamf packaging outputs and Python cache
+/dist/
+__pycache__/
+*.pyc
