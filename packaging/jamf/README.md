@@ -5,9 +5,14 @@ startup files are part of their payloads; activation runs After all packages.
 
 | Package | Repository input | Managed payload | Receipt | Jamf priority |
 | --- | --- | --- | --- | --- |
-| Checks | `shellfirm/checks/*.yaml` | `checks/default-checks.yaml` | `io.vgs.shellfirm.checks` | 10 |
-| Binary | Rust workspace and locked dependencies | `bin/shellfirm` | `io.vgs.shellfirm.binary` | 20 |
-| Policy | Root `.shellfirm.yaml` | `policy/.shellfirm.yaml` | `io.vgs.shellfirm.policy` | 30 |
+| Checks | `shellfirm/checks/*.yaml` | `checks/default-checks.yaml` | `io.vgs.shellfirm.checks` | 5 |
+| Binary | Rust workspace and locked dependencies | `bin/shellfirm` | `io.vgs.shellfirm.binary` | 10 |
+| Policy | Root `.shellfirm.yaml` | `policy/.shellfirm.yaml` | `io.vgs.shellfirm.policy` | 20 |
+
+Jamf accepts priorities from 1 through 20, with lower numbers installed first.
+The uploader validates all three priorities and their dependency order before its
+first package API call. Invalid priorities stop the release before any package
+record is created.
 
 All payloads live below `/Library/Application Support/VGS/ShellFirm/`. The binary
 also exposes the existing `/usr/local/bin/shellfirm` link.

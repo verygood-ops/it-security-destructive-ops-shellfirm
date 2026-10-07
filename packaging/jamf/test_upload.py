@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import upload
 
@@ -80,11 +81,30 @@ class UploadTests(unittest.TestCase):
         self.assertEqual([call[0] for call in api.calls], ["GET", "POST", "POST", "GET", "GET"])
         metadata = api.calls[1][2]
         self.assertNotIn("sha256", metadata)  # Must be computed by Jamf after receiving bytes.
-        self.assertEqual(metadata["priority"], 30)
         self.assertFalse(metadata["rebootRequired"])
         self.assertIn(b'name="file"', api.calls[2][2])
         self.assertIn(b"fixture", api.calls[2][2])
         self.assertTrue(all("/packages" in call[1] for call in api.calls))
+
+    def test_invalid_later_package_priority_stops_before_first_api_call(self):
+        for priority in (0, -1, 21, 30, True, "20", 1.5):
+            with self.subTest(priority=priority):
+                api = FakeJamf([])
+                with patch.dict(upload.PACKAGE_PRIORITIES, {"policy": priority}):
+                    with self.assertRaisesRegex(ValueError, "integers from 1 to 20"):
+                        upload.upload(api, {**self.manifest, "kind": "checks"}, self.package)
+                self.assertEqual(api.calls, [])
+
+    def test_equal_or_reversed_priorities_stop_before_first_api_call(self):
+        for priorities in ({"checks": 10, "binary": 5, "policy": 20},
+                           {"checks": 5, "binary": 20, "policy": 10},
+                           {"checks": 5, "binary": 5, "policy": 20}):
+            with self.subTest(priorities=priorities):
+                api = FakeJamf([])
+                with patch.dict(upload.PACKAGE_PRIORITIES, priorities):
+                    with self.assertRaisesRegex(ValueError, "checks before binary before policy"):
+                        upload.upload(api, {**self.manifest, "kind": "checks"}, self.package)
+                self.assertEqual(api.calls, [])
 
     def test_server_checksum_mismatch_is_failure(self):
         api = FakeJamf([{"totalCount": 0, "results": []}, {"id": "1400"}, {},

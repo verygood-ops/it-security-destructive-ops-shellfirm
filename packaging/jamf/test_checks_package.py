@@ -30,7 +30,12 @@ class ChecksPackageTests(unittest.TestCase):
                 'file_name':'fixture.pkg', 'source_commit':'a'*40, 'package_sha256':'b'*64,
                 'policy_sha256':'c'*64}, '-1')
             priorities.append(metadata['priority'])
-        self.assertEqual(priorities, [10, 20, 30])
+        for priority in priorities:
+            self.assertIs(type(priority), int)
+            self.assertGreaterEqual(priority, 1)
+            self.assertLessEqual(priority, 20)
+        self.assertLess(priorities[0], priorities[1])
+        self.assertLess(priorities[1], priorities[2])
 
     def test_catalog_mismatch_stops_promotion_preparation(self):
         binary = {'application_version':'0.3.10', 'policy_sha256':'a'*64,
