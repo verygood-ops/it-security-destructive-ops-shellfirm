@@ -204,25 +204,37 @@ def release_versions(app, run_number, attempt, date):
     if not re.fullmatch(r'\d+\.\d+\.\d+', app) or not (1 <= run_number <= 999999 and 1 <= attempt <= 99):
         raise ValueError('Invalid application version or workflow run/attempt')
     sequence = 1000 + run_number * 100 + attempt
-    return {'binary': f'{app}.{sequence}', 'policy': f'{date.year}.{date.month}.{date.day}.{sequence}'}
+    return {'binary': f'{app}.{sequence}', 'checks': f'{date.year}.{date.month}.{date.day}.{sequence}',
+            'policy': f'{date.year}.{date.month}.{date.day}.{sequence}'}
 
 
 def prepare_release(directory, commit, run_number, attempt):
     binary, _ = load_artifact(directory / 'binary', commit)
     policy, _ = load_artifact(directory / 'policy', commit)
+    checks, _ = load_artifact(directory / 'checks', commit)
     if binary['application_version'] != policy['application_version'] or binary['policy_sha256'] != policy['payload_sha256']:
         raise ValueError('Binary and policy are not a compatible release pair')
-    for value in (binary['payload_sha256'], policy['payload_sha256']):
+    if (checks['checks_source'] != builder.MANAGED_CHECKS
+            or binary['checks_source'] != builder.MANAGED_CHECKS
+            or binary['checks_sha256'] != checks['payload_sha256']
+            or checks['application_version'] != binary['application_version']):
+        raise ValueError('Default checks are not a compatible release catalog')
+    for manifest, kind in ((binary, 'binary'), (checks, 'checks'), (policy, 'policy')):
+        if manifest['kind'] != kind:
+            raise ValueError('Package kind differs from its release directory')
+    for value in (binary['payload_sha256'], policy['payload_sha256'], checks['payload_sha256']):
         if not re.fullmatch(r'[0-9a-f]{64}', value):
             raise ValueError('Invalid payload digest')
-    release = {'schema': 1, 'source_commit': commit,
+    release = {'schema': 2, 'source_commit': commit,
                'release_id': f'r{run_number}.{attempt} {commit[:12]}',
                'application_version': binary['application_version'],
                'binary_version': binary['package_version'], 'policy_version': policy['package_version'],
-               'binary_sha256': binary['payload_sha256'], 'policy_sha256': policy['payload_sha256']}
+               'binary_sha256': binary['payload_sha256'], 'policy_sha256': policy['payload_sha256'],
+               'checks_version': checks['package_version'], 'checks_sha256': checks['payload_sha256']}
     health = (TEMPLATES / 'health-check.sh').read_text()
     activation = (TEMPLATES / 'activation.zsh').read_text()
     replacements = {'@APP_VERSION@': release['application_version'], '@POLICY_SHA256@': release['policy_sha256'],
+                    '@CHECKS_SHA256@': release['checks_sha256'], '@CHECKS_VERSION@': release['checks_version'],
                     '@BINARY_SHA256@': release['binary_sha256'], '@RELEASE_ID@': release['release_id'],
                     '@HEALTHCHECK@': health,
                     '@RELEASE_PLIST@': plistlib.dumps(release).decode().rstrip()}
@@ -259,8 +271,10 @@ def deploy(directory, commit):
     if (release['source_commit'] != commit or digest(activation) != release['activation_sha256']
             or digest(health) != release['health_sha256']):
         raise ValueError('Release scripts or source commit do not match the build manifest')
-    manifests = [load_artifact(directory / kind, commit) for kind in ('binary', 'policy')]
-    for (manifest, _), kind in zip(manifests, ('binary', 'policy')):
+    manifests = [load_artifact(directory / kind, commit) for kind in ('checks', 'binary', 'policy')]
+    for (manifest, _), kind in zip(manifests, ('checks', 'binary', 'policy')):
+        if manifest['kind'] != kind:
+            raise ValueError('Package kind differs from its release directory')
         if release[kind + '_version'] != manifest['package_version'] or release[kind + '_sha256'] != manifest['payload_sha256']:
             raise ValueError('Package differs from the release descriptor')
     if os.environ['JAMF_URL'].rstrip('/') != CONFIG['jamf_url']:
@@ -305,7 +319,7 @@ def main():
         original = version_path.read_bytes()
         try:
             version_path.write_text(json.dumps(versions) + '\n')
-            for kind in ('binary', 'policy'):
+            for kind in ('checks', 'binary', 'policy'):
                 builder.build(kind, args.binary, args.directory / kind, args.commit)
         finally:
             version_path.write_bytes(original)
@@ -316,7 +330,7 @@ def main():
         if os.environ.get('GITHUB_STEP_SUMMARY'):
             with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
                 summary.write(f"Candidate {release['release_id']}: binary {release['binary_version']}, "
-                              f"policy {release['policy_version']}. After jamf approval: new install and weekly health "
+                              f"checks {release['checks_version']}, policy {release['policy_version']}. After jamf approval: new install and weekly health "
                               "policies for IT Security group 259, retiring policies 409/410 and earlier CI releases.\n")
 
 
